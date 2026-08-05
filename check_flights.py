@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import json
 import os
 import sys
+import re
 
 URL = "https://www.tustus.co.il/Arkia/Home"
 STATE_FILE = "data/previous_flights.json"
@@ -13,6 +14,15 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
+
+
+def extract_seats(el):
+    seats_div = el.find(class_="spcial_message_bottom")
+    if not seats_div:
+        return ""
+    text = seats_div.get_text(separator=" ", strip=True)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
 def fetch_flights():
@@ -28,11 +38,13 @@ def fetch_flights():
         name = el.get("data_ga_item_name", "").strip()
         brand = el.get("data_ga_item_brand", "").strip()  # date range
         price = el.get("data_number_ga_price", "").strip()
+        seats = extract_seats(el)
         items[item_id] = {
             "id": item_id,
             "name": name,
             "dates": brand,
             "price": price,
+            "seats": seats,
         }
     return items
 
@@ -67,6 +79,17 @@ def send_telegram(text):
         print(f"Failed to send Telegram message: {resp.status_code} {resp.text}", file=sys.stderr)
 
 
+def format_item(item):
+    lines = [
+        f"\U0001F6EB {item['name']}",
+        f"\U0001F4C5 {item['dates']}",
+        f"\U0001F4B0 ${item['price']}",
+    ]
+    if item.get("seats"):
+        lines.append(f"\U0001F6A8 {item['seats']}")
+    return "\n".join(lines)
+
+
 def main():
     current = fetch_flights()
     previous = load_previous()
@@ -74,16 +97,11 @@ def main():
     new_ids = set(current.keys()) - set(previous.keys())
 
     if new_ids:
-        lines = ["\u2708\ufe0f \u05e0\u05de\u05e6\u05d0\u05d5 \u05d8\u05d9\u05e1\u05d5\u05ea \u05d7\u05d3\u05e9\u05d5\u05ea \u05d1-tustus.co.il:\n"]
+        blocks = ["\u2708\ufe0f \u05e0\u05de\u05e6\u05d0\u05d5 \u05d8\u05d9\u05e1\u05d5\u05ea \u05d7\u05d3\u05e9\u05d5\u05ea \u05d1-tustus.co.il:\n"]
         for iid in new_ids:
-            item = current[iid]
-            lines.append(
-                f"\U0001F6EB {item['name']}\n"
-                f"\U0001F4C5 {item['dates']}\n"
-                f"\U0001F4B0 ${item['price']}\n"
-            )
-        lines.append(URL)
-        message = "\n".join(lines)
+            blocks.append(format_item(current[iid]))
+        blocks.append(URL)
+        message = "\n\n".join(blocks)
         print(message)
         send_telegram(message)
     else:
